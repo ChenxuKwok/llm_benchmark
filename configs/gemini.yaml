@@ -1,0 +1,9 @@
+dataset_root: data
+split: test
+backend: gemini
+model: gemini-3.1-pro-preview
+mode: reference_free
+workers: 1
+max_retries: 3
+project: your-gcp-project-id
+location: us-central1

@@ -1,0 +1,8 @@
+dataset_root: data
+split: test
+backend: openai
+model: chatgpt-4o-latest
+fallback_model: null
+mode: reference_free
+workers: 1
+max_retries: 3

@@ -64,6 +64,23 @@ Default configs live in `configs/`:
 
 CLI args override config values.
 
+## Auth and Run Sizing
+
+OpenAI:
+
+- Set the API key in your shell: `export OPENAI_API_KEY="sk-..."`
+
+Gemini (Vertex AI):
+
+- Authenticate with GCP: `gcloud auth application-default login`
+- Set `--project` and `--location` (or edit `configs/gemini.yaml`)
+
+Request count and concurrency:
+
+- `--limit N` controls how many samples (requests) to send.
+- `--workers N` controls concurrency.
+- `--max-retries N` controls retry attempts per request.
+
 ## Notes and Limitations
 
 - Word-level metrics are derived from `mis_exp_sug` when explicit labels are absent.

@@ -9,7 +9,11 @@ Minimal, end-to-end benchmark pipeline for evaluating audio-capable LLMs on CAPT
 2. Ensure dataset exists at one of these roots:
    - `data/L2-Arctic-plus/...`
    - `ALMs4Learning/data/L2-Arctic-plus/...`
-3. Run a smoke test:
+3. Ensure prompt templates exist at `data/prompts/`:
+   - `system.txt`
+   - `task_1.txt` (reference-free)
+   - `task_2.txt` (reference-given)
+4. Run a smoke test:
    - OpenAI:
      - `python scripts/run_smoke.py --dataset l2arctic_plus --backend openai --model chatgpt-4o-latest --fallback-model gpt-audio-1.5 --mode reference_free --limit 20`
    - Gemini:

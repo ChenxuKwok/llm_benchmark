@@ -37,6 +37,12 @@ def write_text(path: str, text: str) -> None:
         f.write(text)
 
 
+def append_jsonl(path: str, data: Any) -> None:
+    ensure_dir(os.path.dirname(path) or ".")
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(data, ensure_ascii=False) + "\n")
+
+
 def read_yaml(path: str) -> Any:
     if yaml is None:
         raise RuntimeError("pyyaml is required to read YAML configs")

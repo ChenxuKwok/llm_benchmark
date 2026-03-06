@@ -22,8 +22,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--config", default=None)
-    parser.add_argument("--project", default=None)
-    parser.add_argument("--location", default=None)
+    parser.add_argument("--endpoint-url", default=None)
+    parser.add_argument("--audio-field", default=None, choices=["input_audio", "audio_url"])
+    parser.add_argument("--audio-voice", default=None)
+    parser.add_argument("--modalities", default=None, help="Comma-separated, e.g. text,audio")
     parser.add_argument("--max-retries", type=int, default=3)
     return parser
 
@@ -48,8 +50,10 @@ def main() -> None:
         "run_name": args.run_name,
         "workers": args.workers,
         "force": args.force,
-        "project": args.project,
-        "location": args.location,
+        "endpoint_url": args.endpoint_url,
+        "audio_field": args.audio_field,
+        "audio_voice": args.audio_voice,
+        "audio_modalities": args.modalities.split(",") if args.modalities else None,
         "max_retries": args.max_retries,
     }
     cfg = merge_config(config, overrides)
@@ -64,8 +68,10 @@ def main() -> None:
         limit=cfg.get("limit"),
         workers=cfg.get("workers", 1),
         force=cfg.get("force", False),
-        project=cfg.get("project"),
-        location=cfg.get("location"),
+        endpoint_url=cfg.get("endpoint_url"),
+        audio_field=cfg.get("audio_field"),
+        audio_voice=cfg.get("audio_voice"),
+        audio_modalities=cfg.get("audio_modalities"),
         max_retries=cfg.get("max_retries", 3),
     )
 

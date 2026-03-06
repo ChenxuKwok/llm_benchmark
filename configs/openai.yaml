@@ -6,3 +6,9 @@ fallback_model: null
 mode: reference_free
 workers: 1
 max_retries: 3
+endpoint_url: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+audio_field: input_audio
+audio_voice: alloy
+audio_modalities:
+  - text
+  - audio

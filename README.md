@@ -34,6 +34,7 @@ Outputs are saved under `results/<run_name>/`:
 - `meta/` (per-sample metadata and status)
 - `metrics.json` (machine-readable metrics)
 - `summary.md` (human-readable report)
+- `records.jsonl` (per-sample input/output records)
 
 Runs are resumable: completed samples are skipped unless `--force` is set.
 
@@ -66,14 +67,13 @@ CLI args override config values.
 
 ## Auth and Run Sizing
 
-OpenAI:
+DashScope compatible-mode (used for both OpenAI and Gemini models):
 
-- Set the API key in your shell: `export OPENAI_API_KEY="sk-..."`
-
-Gemini (Vertex AI):
-
-- Authenticate with GCP: `gcloud auth application-default login`
-- Set `--project` and `--location` (or edit `configs/gemini.yaml`)
+- Set the API key in your shell: `export DASHSCOPE_API_KEY="sk-..."`
+- Both backends call the same endpoint and only differ by `model` name.
+- If you prefer, you can set `OPENAI_API_KEY` instead (the runner will use it as a fallback).
+- Default endpoint: `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`
+- Audio is sent as base64 with a `data:<mime>;base64,` prefix, using `input_audio`.
 
 Request count and concurrency:
 

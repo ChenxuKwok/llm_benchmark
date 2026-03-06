@@ -1,10 +1,10 @@
 import base64
 import json
 import os
-import time
-from typing import Any, Dict, Tuple
-
 import subprocess
+import tempfile
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 from benchmark.utils.retry import run_with_retry
 
@@ -59,11 +59,11 @@ def _extract_text(resp_json: Dict[str, Any]) -> str:
 class CompatibleChatRunner:
     def __init__(
         self,
-        api_key: str | None = None,
+        api_key: Optional[str] = None,
         endpoint_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         audio_field: str = "input_audio",
-        audio_voice: str | None = None,
-        audio_modalities: list[str] | None = None,
+        audio_voice: Optional[str] = None,
+        audio_modalities: Optional[List[str]] = None,
         timeout_sec: int = 120,
     ) -> None:
         self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -80,7 +80,7 @@ class CompatibleChatRunner:
         audio_path: str,
         prompt: str,
         model: str,
-        fallback_model: str | None = None,
+        fallback_model: Optional[str] = None,
         max_retries: int = 3,
     ) -> Tuple[str, Dict[str, Any], str, float]:
         audio_content = _build_audio_content(audio_path, self.audio_field)
@@ -110,24 +110,30 @@ class CompatibleChatRunner:
 
             def _do_call() -> Dict[str, Any]:
                 payload_str = json.dumps(payload, ensure_ascii=False)
-                cmd = [
-                    "curl",
-                    "--silent",
-                    "--show-error",
-                    "--location",
-                    "--max-time",
-                    str(self.timeout_sec),
-                    "--header",
-                    "Content-Type: application/json",
-                    "--header",
-                    f"Authorization: Bearer {self.api_key}",
-                    "--data-raw",
-                    payload_str,
-                    "--write-out",
-                    "\\n__STATUS__:%{http_code}",
-                    self.endpoint_url,
-                ]
-                proc = subprocess.run(cmd, capture_output=True, text=True)
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as tmp:
+                    tmp.write(payload_str)
+                    tmp_path = tmp.name
+                try:
+                    cmd = [
+                        "curl",
+                        "--silent",
+                        "--show-error",
+                        "--location",
+                        "--max-time",
+                        str(self.timeout_sec),
+                        "--header",
+                        "Content-Type: application/json",
+                        "--header",
+                        f"Authorization: Bearer {self.api_key}",
+                        "--data",
+                        f"@{tmp_path}",
+                        "--write-out",
+                        "\\n__STATUS__:%{http_code}",
+                        self.endpoint_url,
+                    ]
+                    proc = subprocess.run(cmd, capture_output=True, text=True)
+                finally:
+                    os.unlink(tmp_path)
                 if proc.returncode != 0:
                     raise RuntimeError(proc.stderr.strip() or "curl_error")
                 out = proc.stdout

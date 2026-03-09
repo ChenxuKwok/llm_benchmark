@@ -37,22 +37,89 @@ def _build_audio_content(audio_path: str, audio_field: str) -> Dict[str, Any]:
     return {"type": "audio_url", "audio_url": {"url": data_url}}
 
 
+def _build_gemini_audio_part(audio_path: str) -> Dict[str, Any]:
+    audio_bytes = open(audio_path, "rb").read()
+    mime = _mime_from_path(audio_path)
+    b64 = base64.b64encode(audio_bytes).decode("ascii")
+    return {"inline_data": {"mime_type": mime, "data": b64}}
+
+
+def _is_gemini_model(model_name: str) -> bool:
+    normalized = model_name.strip().lower()
+    return "gemini" in normalized or normalized.startswith("vertex_ai.")
+
+
+def _build_payload(
+    requested_model: str,
+    prompt: str,
+    audio_path: str,
+    audio_field: str,
+    audio_modalities: Optional[List[str]],
+    audio_voice: Optional[str],
+) -> Dict[str, Any]:
+    if _is_gemini_model(requested_model):
+        return {
+            "model": requested_model,
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": prompt},
+                        _build_gemini_audio_part(audio_path),
+                    ],
+                }
+            ],
+        }
+
+    audio_content = _build_audio_content(audio_path, audio_field)
+    fmt = os.path.splitext(audio_path)[1].lower().lstrip(".") or "wav"
+    payload: Dict[str, Any] = {
+        "model": requested_model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    audio_content,
+                ],
+            }
+        ],
+    }
+    if audio_modalities:
+        payload["modalities"] = audio_modalities
+    if audio_field == "input_audio":
+        payload["audio"] = {"format": fmt}
+        if audio_voice:
+            payload["audio"]["voice"] = audio_voice
+    return payload
+
+
 def _extract_text(resp_json: Dict[str, Any]) -> str:
     choices = resp_json.get("choices") or []
-    if not choices:
-        return ""
-    message = choices[0].get("message") or {}
-    content = message.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for item in content:
+    if choices:
+        message = choices[0].get("message") or {}
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and "text" in item:
+                    parts.append(str(item["text"]))
+                elif isinstance(item, str):
+                    parts.append(item)
+            return "".join(parts)
+
+    candidates = resp_json.get("candidates") or []
+    if candidates:
+        content = candidates[0].get("content") or {}
+        parts = content.get("parts") or []
+        texts = []
+        for item in parts:
             if isinstance(item, dict) and "text" in item:
-                parts.append(str(item["text"]))
-            elif isinstance(item, str):
-                parts.append(item)
-        return "".join(parts)
+                texts.append(str(item["text"]))
+        return "".join(texts)
+
     return ""
 
 
@@ -83,28 +150,15 @@ class CompatibleChatRunner:
         fallback_model: Optional[str] = None,
         max_retries: int = 3,
     ) -> Tuple[str, Dict[str, Any], str, float]:
-        audio_content = _build_audio_content(audio_path, self.audio_field)
-        fmt = os.path.splitext(audio_path)[1].lower().lstrip(".") or "wav"
-
         def _call(requested_model: str) -> Tuple[str, Dict[str, Any], str, float]:
-            payload: Dict[str, Any] = {
-                "model": requested_model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            audio_content,
-                        ],
-                    }
-                ],
-            }
-            if self.audio_modalities:
-                payload["modalities"] = self.audio_modalities
-            if self.audio_field == "input_audio":
-                payload["audio"] = {"format": fmt}
-                if self.audio_voice:
-                    payload["audio"]["voice"] = self.audio_voice
+            payload = _build_payload(
+                requested_model=requested_model,
+                prompt=prompt,
+                audio_path=audio_path,
+                audio_field=self.audio_field,
+                audio_modalities=self.audio_modalities,
+                audio_voice=self.audio_voice,
+            )
 
             started = time.perf_counter()
 

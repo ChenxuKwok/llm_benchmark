@@ -44,20 +44,17 @@ def _build_gemini_audio_part(audio_path: str) -> Dict[str, Any]:
     return {"inline_data": {"mime_type": mime, "data": b64}}
 
 
-def _is_gemini_model(model_name: str) -> bool:
-    normalized = model_name.strip().lower()
-    return "gemini" in normalized or normalized.startswith("vertex_ai.")
-
-
 def _build_payload(
+    request_style: str,
     requested_model: str,
     prompt: str,
     audio_path: str,
     audio_field: str,
     audio_modalities: Optional[List[str]],
     audio_voice: Optional[str],
+    use_response_format: bool,
 ) -> Dict[str, Any]:
-    if _is_gemini_model(requested_model):
+    if request_style == "gemini_native":
         return {
             "model": requested_model,
             "contents": [
@@ -70,6 +67,8 @@ def _build_payload(
                 }
             ],
         }
+    if request_style != "openai":
+        raise ValueError("request_style must be 'openai' or 'gemini_native'")
 
     audio_content = _build_audio_content(audio_path, audio_field)
     fmt = os.path.splitext(audio_path)[1].lower().lstrip(".") or "wav"
@@ -86,8 +85,9 @@ def _build_payload(
             }
         ],
         "modalities": modalities,
-        "response_format": {"type": "json_object"},
     }
+    if use_response_format:
+        payload["response_format"] = {"type": "json_object"}
     if audio_field == "input_audio" and "audio" in modalities:
         payload["audio"] = {"format": fmt}
         if audio_voice:
@@ -133,18 +133,22 @@ class CompatibleChatRunner:
         self,
         api_key: Optional[str] = None,
         endpoint_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        request_style: str = "openai",
         audio_field: str = "input_audio",
         audio_voice: Optional[str] = None,
         audio_modalities: Optional[List[str]] = None,
+        use_response_format: bool = False,
         timeout_sec: int = 120,
     ) -> None:
         self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise RuntimeError("Missing API key. Set DASHSCOPE_API_KEY or OPENAI_API_KEY.")
         self.endpoint_url = endpoint_url
+        self.request_style = request_style
         self.audio_field = audio_field
         self.audio_voice = audio_voice
         self.audio_modalities = audio_modalities
+        self.use_response_format = use_response_format
         self.timeout_sec = timeout_sec
 
     def run(
@@ -157,12 +161,14 @@ class CompatibleChatRunner:
     ) -> Tuple[str, Dict[str, Any], str, float]:
         def _call(requested_model: str) -> Tuple[str, Dict[str, Any], str, float]:
             payload = _build_payload(
+                request_style=self.request_style,
                 requested_model=requested_model,
                 prompt=prompt,
                 audio_path=audio_path,
                 audio_field=self.audio_field,
                 audio_modalities=self.audio_modalities,
                 audio_voice=self.audio_voice,
+                use_response_format=self.use_response_format,
             )
 
             started = time.perf_counter()

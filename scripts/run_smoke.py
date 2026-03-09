@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audio-field", default=None, choices=["input_audio", "audio_url"])
     parser.add_argument("--audio-voice", default=None)
     parser.add_argument("--modalities", default=None, help="Comma-separated, e.g. text,audio")
+    parser.add_argument("--use-response-format", action="store_true", default=None)
     parser.add_argument("--max-retries", type=int, default=3)
     return parser
 
@@ -56,6 +57,7 @@ def main() -> None:
         "audio_field": args.audio_field,
         "audio_voice": args.audio_voice,
         "audio_modalities": args.modalities.split(",") if args.modalities else None,
+        "use_response_format": args.use_response_format,
         "max_retries": args.max_retries,
     }
     cfg = merge_config(config, overrides)
@@ -74,6 +76,7 @@ def main() -> None:
         audio_field=cfg.get("audio_field"),
         audio_voice=cfg.get("audio_voice"),
         audio_modalities=cfg.get("audio_modalities"),
+        use_response_format=cfg.get("use_response_format", False),
         max_retries=cfg.get("max_retries", 3),
     )
 

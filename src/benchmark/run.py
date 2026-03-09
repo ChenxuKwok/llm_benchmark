@@ -140,6 +140,7 @@ def run_benchmark(
     audio_field: Optional[str] = None,
     audio_voice: Optional[str] = None,
     audio_modalities: Optional[List[str]] = None,
+    use_response_format: bool = False,
     max_retries: int = 3,
     sample_seed: Optional[int] = None,
 ) -> str:
@@ -169,6 +170,7 @@ def run_benchmark(
         "audio_field": audio_field,
         "audio_voice": audio_voice,
         "audio_modalities": audio_modalities,
+        "use_response_format": use_response_format,
         "sample_seed": sample_seed,
     })
     _write_schema_report(os.path.join(run_dir, "schema_report.json"), schema, samples)
@@ -180,9 +182,11 @@ def run_benchmark(
     runner = CompatibleChatRunner(
         endpoint_url=endpoint_url
         or "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        request_style="gemini_native" if backend == "gemini" else "openai",
         audio_field=audio_field or "input_audio",
         audio_voice=audio_voice,
         audio_modalities=audio_modalities,
+        use_response_format=use_response_format,
     )
 
     log(f"Starting run {run_name} with {len(samples)} samples")

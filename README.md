@@ -75,6 +75,9 @@ DashScope compatible-mode (used for both OpenAI and Gemini models):
 - If you prefer, you can set `OPENAI_API_KEY` instead (the runner will use it as a fallback).
 - Default endpoint: `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`
 - Audio is sent as base64 with a `data:<mime>;base64,` prefix, using `input_audio`.
+- For evaluation, default output is text-only JSON (audio output is disabled unless you explicitly set `--modalities text,audio`).
+- `response_format` is OFF by default. Enable it with `--use-response-format` only for models that explicitly support it.
+- Request style is explicit by backend: `openai -> messages`, `gemini -> contents.parts`.
 
 Request count and concurrency:
 
@@ -86,7 +89,7 @@ Request count and concurrency:
 Gemini troubleshooting:
 
 - If GPT works but Gemini returns `api_error`, first run with `configs/gemini.yaml` defaults (no `audio_modalities` and no `audio_voice`).
-- Models containing `gemini` (for example `vertex_ai.gemini-3.1-pro-preview`) are sent as Gemini-native `contents.parts` payload automatically.
+- `gemini` backend is sent as Gemini-native `contents.parts` payload.
 
 ## Notes and Limitations
 

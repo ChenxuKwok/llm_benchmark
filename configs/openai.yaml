@@ -8,3 +8,4 @@ workers: 1
 max_retries: 3
 endpoint_url: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
 audio_field: input_audio
+use_response_format: false

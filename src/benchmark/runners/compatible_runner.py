@@ -73,6 +73,7 @@ def _build_payload(
 
     audio_content = _build_audio_content(audio_path, audio_field)
     fmt = os.path.splitext(audio_path)[1].lower().lstrip(".") or "wav"
+    modalities = audio_modalities or ["text"]
     payload: Dict[str, Any] = {
         "model": requested_model,
         "messages": [
@@ -84,10 +85,10 @@ def _build_payload(
                 ],
             }
         ],
+        "modalities": modalities,
+        "response_format": {"type": "json_object"},
     }
-    if audio_modalities:
-        payload["modalities"] = audio_modalities
-    if audio_field == "input_audio":
+    if audio_field == "input_audio" and "audio" in modalities:
         payload["audio"] = {"format": fmt}
         if audio_voice:
             payload["audio"]["voice"] = audio_voice
@@ -109,6 +110,10 @@ def _extract_text(resp_json: Dict[str, Any]) -> str:
                 elif isinstance(item, str):
                     parts.append(item)
             return "".join(parts)
+        audio = message.get("audio") or {}
+        transcript = audio.get("transcript")
+        if isinstance(transcript, str):
+            return transcript
 
     candidates = resp_json.get("candidates") or []
     if candidates:

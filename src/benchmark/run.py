@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -140,11 +141,17 @@ def run_benchmark(
     audio_voice: Optional[str] = None,
     audio_modalities: Optional[List[str]] = None,
     max_retries: int = 3,
+    sample_seed: Optional[int] = None,
 ) -> str:
     _run_parser_smoke()
     samples, schema = load_l2arctic_plus(dataset_root, split)
     if limit:
-        samples = samples[:limit]
+        if sample_seed is None:
+            samples = samples[:limit]
+        else:
+            rng = random.Random(sample_seed)
+            if len(samples) > limit:
+                samples = rng.sample(samples, limit)
 
     run_name = run_name or _default_run_name(f"{backend}_{mode}")
     run_dir = os.path.join("results", run_name)
@@ -162,6 +169,7 @@ def run_benchmark(
         "audio_field": audio_field,
         "audio_voice": audio_voice,
         "audio_modalities": audio_modalities,
+        "sample_seed": sample_seed,
     })
     _write_schema_report(os.path.join(run_dir, "schema_report.json"), schema, samples)
     jsonl_path = os.path.join(run_dir, "records.jsonl")

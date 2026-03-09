@@ -22,6 +22,7 @@ Minimal, end-to-end benchmark pipeline for evaluating audio-capable LLMs on CAPT
 ## Full Evaluation
 
 - `python scripts/run_eval.py --dataset l2arctic_plus --backend openai --model chatgpt-4o-latest --mode reference_given`
+- By default, full eval randomly selects 200 samples (`--limit 200 --sample-seed 42`).
 
 ## Results
 
@@ -85,6 +86,7 @@ Request count and concurrency:
 Gemini troubleshooting:
 
 - If GPT works but Gemini returns `api_error`, first run with `configs/gemini.yaml` defaults (no `audio_modalities` and no `audio_voice`).
+- Models containing `gemini` (for example `vertex_ai.gemini-3.1-pro-preview`) are sent as Gemini-native `contents.parts` payload automatically.
 
 ## Notes and Limitations
 

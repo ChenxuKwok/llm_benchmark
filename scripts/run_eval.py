@@ -18,6 +18,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fallback-model", default=None)
     parser.add_argument("--mode", required=True, choices=["reference_free", "reference_given"])
     parser.add_argument("--run-name", default=None)
+    parser.add_argument("--limit", type=int, default=200)
+    parser.add_argument("--sample-seed", type=int, default=42)
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--config", default=None)
@@ -47,6 +49,8 @@ def main() -> None:
         "model": args.model,
         "fallback_model": args.fallback_model,
         "mode": args.mode,
+        "limit": args.limit,
+        "sample_seed": args.sample_seed,
         "run_name": args.run_name,
         "workers": args.workers,
         "force": args.force,
@@ -65,7 +69,7 @@ def main() -> None:
         mode=cfg.get("mode"),
         run_name=cfg.get("run_name"),
         fallback_model=cfg.get("fallback_model"),
-        limit=None,
+        limit=cfg.get("limit", 200),
         workers=cfg.get("workers", 1),
         force=cfg.get("force", False),
         endpoint_url=cfg.get("endpoint_url"),
@@ -73,6 +77,7 @@ def main() -> None:
         audio_voice=cfg.get("audio_voice"),
         audio_modalities=cfg.get("audio_modalities"),
         max_retries=cfg.get("max_retries", 3),
+        sample_seed=cfg.get("sample_seed", 42),
     )
 
 

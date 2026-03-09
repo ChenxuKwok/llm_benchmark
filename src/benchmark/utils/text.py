@@ -1,5 +1,5 @@
 import re
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
@@ -50,7 +50,7 @@ def edit_distance(ref: List[str], hyp: List[str]) -> Tuple[int, int, int]:
     return subs, dels, ins
 
 
-def wer(reference: str, hypothesis: str) -> float | None:
+def wer(reference: str, hypothesis: str) -> Optional[float]:
     ref_words = normalize_words(reference or "")
     hyp_words = normalize_words(hypothesis or "")
     if not ref_words:

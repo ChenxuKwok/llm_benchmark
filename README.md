@@ -15,9 +15,9 @@ Minimal, end-to-end benchmark pipeline for evaluating audio-capable LLMs on CAPT
    - `task_2.txt` (reference-given)
 4. Run a smoke test:
    - OpenAI:
-     - `python scripts/run_smoke.py --dataset l2arctic_plus --backend openai --model chatgpt-4o-latest --fallback-model gpt-audio-1.5 --mode reference_free --limit 20`
+     - `python scripts/run_smoke.py --dataset l2arctic_plus --backend openai --model chatgpt-4o-latest --mode reference_free --limit 2`
    - Gemini:
-     - `python scripts/run_smoke.py --dataset l2arctic_plus --backend gemini --model gemini-3.1-pro-preview --mode reference_free --limit 20 --project <gcp-project> --location us-central1`
+     - `python scripts/run_smoke.py --dataset l2arctic_plus --backend gemini --model gemini-3.1-pro-preview --mode reference_free --limit 20`
 
 ## Full Evaluation
 
@@ -80,6 +80,11 @@ Request count and concurrency:
 - `--limit N` controls how many samples (requests) to send.
 - `--workers N` controls concurrency.
 - `--max-retries N` controls retry attempts per request.
+- `--fallback-model null` and `--fallback-model none` are treated as no fallback.
+
+Gemini troubleshooting:
+
+- If GPT works but Gemini returns `api_error`, first run with `configs/gemini.yaml` defaults (no `audio_modalities` and no `audio_voice`).
 
 ## Notes and Limitations
 

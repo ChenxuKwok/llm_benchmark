@@ -1,9 +1,10 @@
 import os
+from typing import Optional
 
 PROMPT_VERSION = "capt-data-prompts-v1"
 
 
-def _read_prompt(path: str) -> str | None:
+def _read_prompt(path: str) -> Optional[str]:
     if not os.path.exists(path):
         return None
     with open(path, "r", encoding="utf-8") as f:
@@ -11,7 +12,7 @@ def _read_prompt(path: str) -> str | None:
 
 
 def build_prompt(
-    mode: str, reference_text: str | None, prompts_dir: str = "data/prompts"
+    mode: str, reference_text: Optional[str], prompts_dir: str = "data/prompts"
 ) -> str:
     if mode not in {"reference_free", "reference_given"}:
         raise ValueError("mode must be reference_free or reference_given")

@@ -143,7 +143,7 @@ class CompatibleChatRunner:
                 status = int(status_str.strip() or "0")
                 body = body.strip()
                 if status < 200 or status >= 300:
-                    raise RuntimeError(f"http_{status}:{body[:500]}")
+                    raise RuntimeError(f"http_{status}:{body[:4000]}")
                 return json.loads(body) if body else {}
 
             resp_json = run_with_retry(_do_call, max_retries=max_retries)

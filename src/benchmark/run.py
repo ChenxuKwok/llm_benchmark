@@ -4,7 +4,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from threading import Lock
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from benchmark.data.l2arctic_plus import DatasetSample, load_l2arctic_plus
 from benchmark.eval.metrics import (
@@ -130,15 +130,15 @@ def run_benchmark(
     backend: str,
     model: str,
     mode: str,
-    run_name: str | None = None,
-    fallback_model: str | None = None,
-    limit: int | None = None,
+    run_name: Optional[str] = None,
+    fallback_model: Optional[str] = None,
+    limit: Optional[int] = None,
     workers: int = 1,
     force: bool = False,
-    endpoint_url: str | None = None,
-    audio_field: str | None = None,
-    audio_voice: str | None = None,
-    audio_modalities: List[str] | None = None,
+    endpoint_url: Optional[str] = None,
+    audio_field: Optional[str] = None,
+    audio_voice: Optional[str] = None,
+    audio_modalities: Optional[List[str]] = None,
     max_retries: int = 3,
 ) -> str:
     _run_parser_smoke()

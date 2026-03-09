@@ -1,6 +1,6 @@
 import random
 import time
-from typing import Callable, TypeVar
+from typing import Callable, Optional, TypeVar
 
 T = TypeVar("T")
 
@@ -24,7 +24,7 @@ def run_with_retry(
     max_retries: int = 3,
     base_delay: float = 1.0,
     max_delay: float = 20.0,
-    retryable: Callable[[Exception], bool] | None = None,
+    retryable: Optional[Callable[[Exception], bool]] = None,
 ) -> T:
     attempt = 0
     retryable = retryable or _default_retryable

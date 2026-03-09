@@ -1,9 +1,9 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from benchmark.utils.io import read_json, read_yaml
 
 
-def load_config(path: str | None) -> Dict[str, Any]:
+def load_config(path: Optional[str]) -> Dict[str, Any]:
     if not path:
         return {}
     if path.endswith(".json"):

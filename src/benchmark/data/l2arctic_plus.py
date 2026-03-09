@@ -1,7 +1,7 @@
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from benchmark.utils.io import read_json
 from benchmark.utils.paths import resolve_audio_path, sanitize_id
@@ -10,18 +10,18 @@ from benchmark.utils.text import normalize_words
 
 @dataclass
 class DatasetSchema:
-    audio_key: str | None
-    reference_key: str | None
-    word_error_key: str | None
-    phoneme_error_key: str | None
-    sample_id_key: str | None
+    audio_key: Optional[str]
+    reference_key: Optional[str]
+    word_error_key: Optional[str]
+    phoneme_error_key: Optional[str]
+    sample_id_key: Optional[str]
 
 
 @dataclass
 class DatasetSample:
     sample_id: str
     audio_path: str
-    reference_text: str | None
+    reference_text: Optional[str]
     raw: Dict[str, Any]
     word_errors_raw: Any
     phoneme_errors_raw: Any
@@ -64,14 +64,14 @@ _ID_KEYS = ["id", "utt_id", "utterance_id", "sample_id"]
 _AUDIO_EXTS = (".wav", ".flac", ".mp3", ".m4a", ".ogg")
 
 
-def _find_first_key(entry: Dict[str, Any], keys: List[str]) -> str | None:
+def _find_first_key(entry: Dict[str, Any], keys: List[str]) -> Optional[str]:
     for key in keys:
         if key in entry:
             return key
     return None
 
 
-def _find_audio_value(entry: Dict[str, Any]) -> Tuple[str | None, str | None]:
+def _find_audio_value(entry: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
     key = _find_first_key(entry, _AUDIO_KEYS)
     if key:
         value = entry.get(key)
@@ -113,7 +113,7 @@ def inspect_schema(entries: List[Dict[str, Any]]) -> DatasetSchema:
         if id_key:
             counts["id"][id_key] = counts["id"].get(id_key, 0) + 1
 
-    def pick_best(bucket: Dict[str, int]) -> str | None:
+    def pick_best(bucket: Dict[str, int]) -> Optional[str]:
         if not bucket:
             return None
         return sorted(bucket.items(), key=lambda x: x[1], reverse=True)[0][0]
@@ -127,7 +127,7 @@ def inspect_schema(entries: List[Dict[str, Any]]) -> DatasetSchema:
     )
 
 
-def _extract_by_key(entry: Dict[str, Any], key: str | None) -> Any:
+def _extract_by_key(entry: Dict[str, Any], key: Optional[str]) -> Any:
     if not key:
         return None
     return entry.get(key)
@@ -242,12 +242,12 @@ def _derive_errors_from_mis_exp_sug(mis_exp_sug: Any, text: str) -> Tuple[List[i
 _ISSUE_QUOTE_RE = re.compile(r'"([^"]+)"')
 
 
-def _parse_issue_string(issue: Any) -> List[Tuple[str, str | None, str | None]]:
+def _parse_issue_string(issue: Any) -> List[Tuple[str, Optional[str], Optional[str]]]:
     if not isinstance(issue, str):
         return []
     lower = issue.lower()
     quotes = _ISSUE_QUOTE_RE.findall(issue)
-    results: List[Tuple[str, str | None, str | None]] = []
+    results: List[Tuple[str, Optional[str], Optional[str]]] = []
     if "replaced with" in lower and len(quotes) >= 2:
         results.append(("substitution", quotes[0], quotes[1]))
         return results

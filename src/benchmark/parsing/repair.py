@@ -1,7 +1,7 @@
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 _FENCE_RE = re.compile(r"^```(?:json)?|```$", re.MULTILINE)
@@ -10,8 +10,8 @@ _TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")
 
 @dataclass
 class ParseResult:
-    data: Dict[str, Any] | None
-    repaired_text: str | None
+    data: Optional[Dict[str, Any]]
+    repaired_text: Optional[str]
     errors: List[str]
     warnings: List[str]
 
@@ -20,7 +20,7 @@ def _strip_fences(text: str) -> str:
     return _FENCE_RE.sub("", text).strip()
 
 
-def _extract_outermost_json(text: str) -> str | None:
+def _extract_outermost_json(text: str) -> Optional[str]:
     start = text.find("{")
     if start == -1:
         return None
@@ -42,7 +42,7 @@ def _repair_common(text: str) -> str:
     return text
 
 
-def _coerce_loc(value: Any) -> int | None:
+def _coerce_loc(value: Any) -> Optional[int]:
     if isinstance(value, int):
         return value
     if isinstance(value, str) and value.strip().isdigit():
@@ -113,7 +113,7 @@ def _coerce_loc_content(items: Any, warnings: List[str], field: str) -> List[Dic
     return cleaned
 
 
-def _validate(obj: Any) -> Tuple[Dict[str, Any] | None, List[str], List[str]]:
+def _validate(obj: Any) -> Tuple[Optional[Dict[str, Any]], List[str], List[str]]:
     errors: List[str] = []
     warnings: List[str] = []
     if not isinstance(obj, dict):

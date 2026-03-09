@@ -35,6 +35,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.dataset != "l2arctic_plus":
         raise ValueError("Only l2arctic_plus is supported")
+    if isinstance(args.fallback_model, str) and args.fallback_model.strip().lower() in {"null", "none", ""}:
+        args.fallback_model = None
     config_path = args.config
     if config_path is None:
         config_path = os.path.join("configs", f"{args.backend}.yaml")

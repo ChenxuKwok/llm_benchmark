@@ -108,7 +108,7 @@ class MetricAvailability:
     reason: Optional[str] = None
 
 
-def _precision_recall_f1(tp: int, fp: int, fn: int) -> Dict[str, float | None]:
+def _precision_recall_f1(tp: int, fp: int, fn: int) -> Dict[str, Optional[float]]:
     precision = tp / (tp + fp) if (tp + fp) > 0 else None
     recall = tp / (tp + fn) if (tp + fn) > 0 else None
     if precision is None or recall is None or (precision + recall) == 0:

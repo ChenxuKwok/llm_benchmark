@@ -1,6 +1,24 @@
 import json
+import math
+import random
 import argparse
+from pathlib import Path
 from typing import List, Tuple, Dict, Any
+
+'''
+python build_multitask_chatml_dataset.py \
+  --input filtered.jsonl \
+  --output_dir chatml_dataset \
+  --train_ratio 0.98 \
+  --train_mode sample \
+  --dev_mode all \
+  --train_samples_per_audio 4 \
+  --w_main 0.5 \
+  --w_canonical 0.25 \
+  --w_edit 0.25 \
+  --w_realized_from_transcript 0.0 \
+  --save_split_jsonl
+'''
 
 
 def parse_timestamped_segments(s: str) -> List[Dict[str, Any]]:
@@ -10,7 +28,6 @@ def parse_timestamped_segments(s: str) -> List[Dict[str, Any]]:
     into:
     [
       {"start": 5.76, "end": 9.12, "content": "..."},
-      {"start": 9.84, "end": 14.24, "content": "..."},
       ...
     ]
     """
@@ -148,6 +165,15 @@ def build_system_prompt() -> str:
     )
 
 
+def base_meta(sample: Dict[str, Any], task_name: str) -> Dict[str, Any]:
+    return {
+        "task_name": task_name,
+        "original_audio": sample.get("original_audio"),
+        "start_time": sample.get("start_time"),
+        "end_time": sample.get("end_time"),
+    }
+
+
 def build_main_task(sample: Dict[str, Any], system_prompt: str) -> Dict[str, Any]:
     """
     Main task:
@@ -178,7 +204,8 @@ def build_main_task(sample: Dict[str, Any], system_prompt: str) -> Dict[str, Any
                 "content": [{"text": sample["huper"]}],
             },
         ],
-        "source": "jsonl_conversion_main_task",
+        "source": "constructed_multitask_chatml",
+        "metadata": base_meta(sample, "main_audio_to_realized"),
     }
 
 
@@ -213,7 +240,8 @@ def build_aux_canonical_task(sample: Dict[str, Any], system_prompt: str) -> Dict
                 "content": [{"text": sample["g2p"]}],
             },
         ],
-        "source": "jsonl_conversion_aux_canonical_task",
+        "source": "constructed_multitask_chatml",
+        "metadata": base_meta(sample, "aux_audio_text_to_canonical"),
     }
 
 
@@ -221,7 +249,6 @@ def build_aux_edit_task(sample: Dict[str, Any], system_prompt: str) -> Dict[str,
     """
     Auxiliary task:
       Audio + transcript -> canonical-to-realized transformation / edit-style supervision
-    We align g2p vs huper segment by segment and output edit lines.
     """
     text_segments = parse_timestamped_segments(sample["text"])
     g2p_segments = parse_timestamped_segments(sample["g2p"])
@@ -277,7 +304,8 @@ def build_aux_edit_task(sample: Dict[str, Any], system_prompt: str) -> Dict[str,
                 "content": [{"text": assistant_text}],
             },
         ],
-        "source": "jsonl_conversion_aux_edit_task",
+        "source": "constructed_multitask_chatml",
+        "metadata": base_meta(sample, "aux_audio_text_to_edit"),
     }
 
 
@@ -311,96 +339,277 @@ def build_aux_realized_from_transcript_task(sample: Dict[str, Any], system_promp
                 "content": [{"text": sample["huper"]}],
             },
         ],
-        "source": "jsonl_conversion_aux_realized_from_transcript_task",
+        "source": "constructed_multitask_chatml",
+        "metadata": base_meta(sample, "aux_audio_text_to_realized"),
     }
 
 
-def convert_one_sample(
-    sample: Dict[str, Any],
-    include_main: bool,
-    include_aux_canonical: bool,
-    include_aux_edit: bool,
-    include_aux_realized_from_transcript: bool,
-) -> List[Dict[str, Any]]:
-    system_prompt = build_system_prompt()
-    tasks = []
-
-    if include_main:
-        tasks.append(build_main_task(sample, system_prompt))
-    if include_aux_canonical:
-        tasks.append(build_aux_canonical_task(sample, system_prompt))
-    if include_aux_edit:
-        tasks.append(build_aux_edit_task(sample, system_prompt))
-    if include_aux_realized_from_transcript:
-        tasks.append(build_aux_realized_from_transcript_task(sample, system_prompt))
-
-    return tasks
+TASK_BUILDERS = {
+    "main": build_main_task,
+    "canonical": build_aux_canonical_task,
+    "edit": build_aux_edit_task,
+    "realized_from_transcript": build_aux_realized_from_transcript_task,
+}
 
 
-def convert_file(
-    input_jsonl: str,
-    output_jsonl: str,
-    include_main: bool = True,
-    include_aux_canonical: bool = True,
-    include_aux_edit: bool = True,
-    include_aux_realized_from_transcript: bool = False,
-) -> int:
-    total_written = 0
-
-    with open(input_jsonl, "r", encoding="utf-8") as fin, open(output_jsonl, "w", encoding="utf-8") as fout:
-        for line in fin:
+def load_jsonl(path: str) -> List[Dict[str, Any]]:
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
             line = line.strip()
             if not line:
                 continue
+            rows.append(json.loads(line))
+    return rows
 
-            sample = json.loads(line)
-            tasks = convert_one_sample(
-                sample=sample,
-                include_main=include_main,
-                include_aux_canonical=include_aux_canonical,
-                include_aux_edit=include_aux_edit,
-                include_aux_realized_from_transcript=include_aux_realized_from_transcript,
-            )
 
-            for t in tasks:
-                fout.write(json.dumps(t, ensure_ascii=False) + "\n")
-                total_written += 1
+def save_jsonl(rows: List[Dict[str, Any]], path: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    return total_written
+
+def split_rows(rows: List[Dict[str, Any]], train_ratio: float, seed: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    idxs = list(range(len(rows)))
+    rnd = random.Random(seed)
+    rnd.shuffle(idxs)
+
+    train_n = int(round(len(rows) * train_ratio))
+    train_ids = set(idxs[:train_n])
+
+    train_rows, dev_rows = [], []
+    for i, row in enumerate(rows):
+        if i in train_ids:
+            train_rows.append(row)
+        else:
+            dev_rows.append(row)
+    return train_rows, dev_rows
+
+
+def normalize_weights(task_weights: Dict[str, float]) -> Dict[str, float]:
+    positive = {k: float(v) for k, v in task_weights.items() if float(v) > 0}
+    s = sum(positive.values())
+    if s <= 0:
+        raise ValueError("At least one task weight must be > 0.")
+    return {k: v / s for k, v in positive.items()}
+
+
+def integer_allocation(weights: Dict[str, float], total_slots: int) -> Dict[str, int]:
+    """
+    Largest remainder method.
+    Example:
+      weights = {"main":0.5, "canonical":0.25, "edit":0.25}
+      total_slots = 4
+      -> {"main":2, "canonical":1, "edit":1}
+    """
+    if total_slots <= 0:
+        return {k: 0 for k in weights.keys()}
+
+    normalized = normalize_weights(weights)
+    raw = {k: normalized[k] * total_slots for k in normalized}
+    base = {k: int(math.floor(v)) for k, v in raw.items()}
+    used = sum(base.values())
+    remain = total_slots - used
+
+    remainders = sorted(
+        [(raw[k] - base[k], k) for k in normalized],
+        key=lambda x: (-x[0], x[1]),
+    )
+
+    for i in range(remain):
+        _, k = remainders[i % len(remainders)]
+        base[k] += 1
+
+    return base
+
+
+def build_chatml_rows_for_split(
+    rows: List[Dict[str, Any]],
+    task_weights: Dict[str, float],
+    samples_per_audio: int,
+    mode: str,
+    seed: int,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """
+    mode:
+      - "sample": per audio, sample tasks according to weights and samples_per_audio
+      - "all": emit each enabled task exactly once per audio
+    """
+    system_prompt = build_system_prompt()
+    enabled_tasks = [k for k, v in task_weights.items() if v > 0]
+    if len(enabled_tasks) == 0:
+        raise ValueError("No enabled tasks.")
+
+    out = []
+    counter = {k: 0 for k in TASK_BUILDERS.keys()}
+    rnd = random.Random(seed)
+
+    if mode == "sample":
+        alloc = integer_allocation({k: task_weights[k] for k in enabled_tasks}, samples_per_audio)
+
+        for sample in rows:
+            local_tasks = []
+            for task_name, count in alloc.items():
+                builder = TASK_BUILDERS[task_name]
+                for _ in range(count):
+                    local_tasks.append(builder(sample, system_prompt))
+                    counter[task_name] += 1
+            rnd.shuffle(local_tasks)
+            out.extend(local_tasks)
+
+    elif mode == "all":
+        for sample in rows:
+            local_tasks = []
+            for task_name in enabled_tasks:
+                builder = TASK_BUILDERS[task_name]
+                local_tasks.append(builder(sample, system_prompt))
+                counter[task_name] += 1
+            rnd.shuffle(local_tasks)
+            out.extend(local_tasks)
+    else:
+        raise ValueError(f"Unsupported mode: {mode}")
+
+    rnd.shuffle(out)
+    return out, counter
+
+
+def parse_task_weights(args) -> Dict[str, float]:
+    return {
+        "main": args.w_main,
+        "canonical": args.w_canonical,
+        "edit": args.w_edit,
+        "realized_from_transcript": args.w_realized_from_transcript,
+    }
+
+
+def save_stats(
+    output_dir: Path,
+    train_rows: List[Dict[str, Any]],
+    dev_rows: List[Dict[str, Any]],
+    train_chatml: List[Dict[str, Any]],
+    dev_chatml: List[Dict[str, Any]],
+    train_counter: Dict[str, int],
+    dev_counter: Dict[str, int],
+    config: Dict[str, Any],
+) -> None:
+    stats = {
+        "config": config,
+        "num_input_rows": len(train_rows) + len(dev_rows),
+        "num_train_rows": len(train_rows),
+        "num_dev_rows": len(dev_rows),
+        "num_train_chatml": len(train_chatml),
+        "num_dev_chatml": len(dev_chatml),
+        "train_task_counts": train_counter,
+        "dev_task_counts": dev_counter,
+    }
+    with open(output_dir / "stats.json", "w", encoding="utf-8") as f:
+        json.dump(stats, f, ensure_ascii=False, indent=2)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert unified-vocab JSONL into task-specific ChatML JSONL.")
-    parser.add_argument("--input", type=str, required=True, help="Input unified-vocab JSONL")
-    parser.add_argument("--output", type=str, required=True, help="Output ChatML JSONL")
-    parser.add_argument("--no_main", action="store_true", help="Disable main task: audio -> realized phone sequence")
+    parser = argparse.ArgumentParser(
+        description="Build train/dev split + multitask ChatML + sampling ratio control from filtered JSONL."
+    )
+    parser.add_argument("--input", type=str, required=True, help="Input filtered unified-vocab JSONL")
+    parser.add_argument("--output_dir", type=str, required=True, help="Output directory")
+
+    parser.add_argument("--train_ratio", type=float, default=0.98, help="Train split ratio")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+
     parser.add_argument(
-        "--no_aux_canonical",
-        action="store_true",
-        help="Disable auxiliary task: audio + transcript -> canonical phone sequence",
+        "--train_mode",
+        type=str,
+        default="sample",
+        choices=["sample", "all"],
+        help="How to build train split ChatML"
     )
     parser.add_argument(
-        "--no_aux_edit",
-        action="store_true",
-        help="Disable auxiliary task: audio + transcript -> canonical-to-realized edit supervision",
+        "--dev_mode",
+        type=str,
+        default="all",
+        choices=["sample", "all"],
+        help="How to build dev split ChatML"
+    )
+
+    parser.add_argument(
+        "--train_samples_per_audio",
+        type=int,
+        default=4,
+        help="Only used when train_mode=sample. Example: 4 + weights 0.5/0.25/0.25 -> 2/1/1 samples per audio."
     )
     parser.add_argument(
-        "--include_aux_realized_from_transcript",
-        action="store_true",
-        help="Enable optional task: audio + transcript -> realized phone sequence",
+        "--dev_samples_per_audio",
+        type=int,
+        default=3,
+        help="Only used when dev_mode=sample."
     )
+
+    parser.add_argument("--w_main", type=float, default=0.5, help="Weight for main task")
+    parser.add_argument("--w_canonical", type=float, default=0.25, help="Weight for canonical auxiliary task")
+    parser.add_argument("--w_edit", type=float, default=0.25, help="Weight for edit auxiliary task")
+    parser.add_argument("--w_realized_from_transcript", type=float, default=0.0, help="Weight for optional realized-from-transcript task")
+
+    parser.add_argument("--save_split_jsonl", action="store_true", help="Also save raw train/dev split JSONL")
     args = parser.parse_args()
 
-    total = convert_file(
-        input_jsonl=args.input,
-        output_jsonl=args.output,
-        include_main=not args.no_main,
-        include_aux_canonical=not args.no_aux_canonical,
-        include_aux_edit=not args.no_aux_edit,
-        include_aux_realized_from_transcript=args.include_aux_realized_from_transcript,
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    rows = load_jsonl(args.input)
+    train_rows, dev_rows = split_rows(rows, train_ratio=args.train_ratio, seed=args.seed)
+
+    task_weights = parse_task_weights(args)
+
+    train_chatml, train_counter = build_chatml_rows_for_split(
+        rows=train_rows,
+        task_weights=task_weights,
+        samples_per_audio=args.train_samples_per_audio,
+        mode=args.train_mode,
+        seed=args.seed,
     )
 
-    print(f"Wrote {total} ChatML samples to {args.output}")
+    dev_chatml, dev_counter = build_chatml_rows_for_split(
+        rows=dev_rows,
+        task_weights=task_weights,
+        samples_per_audio=args.dev_samples_per_audio,
+        mode=args.dev_mode,
+        seed=args.seed + 1,
+    )
+
+    save_jsonl(train_chatml, str(output_dir / "train.chatml.jsonl"))
+    save_jsonl(dev_chatml, str(output_dir / "dev.chatml.jsonl"))
+
+    if args.save_split_jsonl:
+        save_jsonl(train_rows, str(output_dir / "train.split.jsonl"))
+        save_jsonl(dev_rows, str(output_dir / "dev.split.jsonl"))
+
+    save_stats(
+        output_dir=output_dir,
+        train_rows=train_rows,
+        dev_rows=dev_rows,
+        train_chatml=train_chatml,
+        dev_chatml=dev_chatml,
+        train_counter=train_counter,
+        dev_counter=dev_counter,
+        config={
+            "input": args.input,
+            "train_ratio": args.train_ratio,
+            "seed": args.seed,
+            "train_mode": args.train_mode,
+            "dev_mode": args.dev_mode,
+            "train_samples_per_audio": args.train_samples_per_audio,
+            "dev_samples_per_audio": args.dev_samples_per_audio,
+            "task_weights": task_weights,
+            "save_split_jsonl": args.save_split_jsonl,
+        },
+    )
+
+    print(f"Input rows: {len(rows)}")
+    print(f"Train rows: {len(train_rows)}")
+    print(f"Dev rows: {len(dev_rows)}")
+    print(f"Train ChatML: {len(train_chatml)}")
+    print(f"Dev ChatML: {len(dev_chatml)}")
+    print(f"Saved to: {output_dir}")
 
 
 if __name__ == "__main__":

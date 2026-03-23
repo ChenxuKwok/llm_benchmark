@@ -1,12 +1,15 @@
+
 import json
 import math
 import random
 import argparse
 from pathlib import Path
 from typing import List, Tuple, Dict, Any
+from multiprocessing import get_context, cpu_count
+from functools import partial
 
 '''
-python build_multitask_chatml_dataset.py \
+python build_multitask_chatml_dataset_parallel.py \
   --input filtered.jsonl \
   --output_dir chatml_dataset \
   --train_ratio 0.98 \
@@ -17,20 +20,16 @@ python build_multitask_chatml_dataset.py \
   --w_canonical 0.25 \
   --w_edit 0.25 \
   --w_realized_from_transcript 0.0 \
-  --save_split_jsonl
+  --save_split_jsonl \
+  --num_workers 32 \
+  --chunksize 32
 '''
 
 
+# -----------------------------
+# Timestamp parsing / alignment
+# -----------------------------
 def parse_timestamped_segments(s: str) -> List[Dict[str, Any]]:
-    """
-    Parse strings like:
-    <|5.76|>...<|9.12|><|9.84|>...<|14.24|>
-    into:
-    [
-      {"start": 5.76, "end": 9.12, "content": "..."},
-      ...
-    ]
-    """
     if s is None:
         return []
 
@@ -86,13 +85,6 @@ def parse_timestamped_segments(s: str) -> List[Dict[str, Any]]:
 
 
 def align_edit_script(src: List[str], tgt: List[str]) -> Tuple[List[Tuple[str, str, str]], List[str]]:
-    """
-    Align canonical src -> realized tgt using edit distance.
-    Return:
-      ops: [(op, src_token, tgt_token), ...]
-      lines: human-readable edit lines
-    op in {"=", "S", "D", "I"}
-    """
     n, m = len(src), len(tgt)
     dp = [[0] * (m + 1) for _ in range(n + 1)]
     bt = [[None] * (m + 1) for _ in range(n + 1)]
@@ -105,20 +97,24 @@ def align_edit_script(src: List[str], tgt: List[str]) -> Tuple[List[Tuple[str, s
         bt[0][j] = "I"
 
     for i in range(1, n + 1):
+        src_i = src[i - 1]
+        dp_i = dp[i]
+        dp_prev = dp[i - 1]
+        bt_i = bt[i]
         for j in range(1, m + 1):
-            sub_cost = dp[i - 1][j - 1] + (0 if src[i - 1] == tgt[j - 1] else 1)
-            del_cost = dp[i - 1][j] + 1
-            ins_cost = dp[i][j - 1] + 1
+            sub_cost = dp_prev[j - 1] + (0 if src_i == tgt[j - 1] else 1)
+            del_cost = dp_prev[j] + 1
+            ins_cost = dp_i[j - 1] + 1
 
             best = min(sub_cost, del_cost, ins_cost)
-            dp[i][j] = best
+            dp_i[j] = best
 
             if best == sub_cost:
-                bt[i][j] = "=" if src[i - 1] == tgt[j - 1] else "S"
+                bt_i[j] = "=" if src_i == tgt[j - 1] else "S"
             elif best == del_cost:
-                bt[i][j] = "D"
+                bt_i[j] = "D"
             else:
-                bt[i][j] = "I"
+                bt_i[j] = "I"
 
     i, j = n, m
     ops = []
@@ -157,6 +153,9 @@ def align_edit_script(src: List[str], tgt: List[str]) -> Tuple[List[Tuple[str, s
     return ops, lines
 
 
+# -----------------------------
+# Task builders
+# -----------------------------
 def build_system_prompt() -> str:
     return (
         "You are a speech perception assistant. "
@@ -175,18 +174,10 @@ def base_meta(sample: Dict[str, Any], task_name: str) -> Dict[str, Any]:
 
 
 def build_main_task(sample: Dict[str, Any], system_prompt: str) -> Dict[str, Any]:
-    """
-    Main task:
-      Audio -> realized phone sequence
-    Target = HuPER
-    """
     return {
         "type": "chatml",
         "messages": [
-            {
-                "role": "system",
-                "content": [{"text": system_prompt}],
-            },
+            {"role": "system", "content": [{"text": system_prompt}]},
             {
                 "role": "user",
                 "content": [
@@ -199,10 +190,7 @@ def build_main_task(sample: Dict[str, Any], system_prompt: str) -> Dict[str, Any
                     },
                 ],
             },
-            {
-                "role": "assistant",
-                "content": [{"text": sample["huper"]}],
-            },
+            {"role": "assistant", "content": [{"text": sample["huper"]}]},
         ],
         "source": "constructed_multitask_chatml",
         "metadata": base_meta(sample, "main_audio_to_realized"),
@@ -210,18 +198,10 @@ def build_main_task(sample: Dict[str, Any], system_prompt: str) -> Dict[str, Any
 
 
 def build_aux_canonical_task(sample: Dict[str, Any], system_prompt: str) -> Dict[str, Any]:
-    """
-    Auxiliary task:
-      Audio + transcript -> canonical phone sequence
-    Target = g2p
-    """
     return {
         "type": "chatml",
         "messages": [
-            {
-                "role": "system",
-                "content": [{"text": system_prompt}],
-            },
+            {"role": "system", "content": [{"text": system_prompt}]},
             {
                 "role": "user",
                 "content": [
@@ -235,10 +215,7 @@ def build_aux_canonical_task(sample: Dict[str, Any], system_prompt: str) -> Dict
                     },
                 ],
             },
-            {
-                "role": "assistant",
-                "content": [{"text": sample["g2p"]}],
-            },
+            {"role": "assistant", "content": [{"text": sample["g2p"]}]},
         ],
         "source": "constructed_multitask_chatml",
         "metadata": base_meta(sample, "aux_audio_text_to_canonical"),
@@ -246,10 +223,6 @@ def build_aux_canonical_task(sample: Dict[str, Any], system_prompt: str) -> Dict
 
 
 def build_aux_edit_task(sample: Dict[str, Any], system_prompt: str) -> Dict[str, Any]:
-    """
-    Auxiliary task:
-      Audio + transcript -> canonical-to-realized transformation / edit-style supervision
-    """
     text_segments = parse_timestamped_segments(sample["text"])
     g2p_segments = parse_timestamped_segments(sample["g2p"])
     huper_segments = parse_timestamped_segments(sample["huper"])
@@ -281,10 +254,7 @@ def build_aux_edit_task(sample: Dict[str, Any], system_prompt: str) -> Dict[str,
     return {
         "type": "chatml",
         "messages": [
-            {
-                "role": "system",
-                "content": [{"text": system_prompt}],
-            },
+            {"role": "system", "content": [{"text": system_prompt}]},
             {
                 "role": "user",
                 "content": [
@@ -299,10 +269,7 @@ def build_aux_edit_task(sample: Dict[str, Any], system_prompt: str) -> Dict[str,
                     },
                 ],
             },
-            {
-                "role": "assistant",
-                "content": [{"text": assistant_text}],
-            },
+            {"role": "assistant", "content": [{"text": assistant_text}]},
         ],
         "source": "constructed_multitask_chatml",
         "metadata": base_meta(sample, "aux_audio_text_to_edit"),
@@ -310,18 +277,10 @@ def build_aux_edit_task(sample: Dict[str, Any], system_prompt: str) -> Dict[str,
 
 
 def build_aux_realized_from_transcript_task(sample: Dict[str, Any], system_prompt: str) -> Dict[str, Any]:
-    """
-    Optional auxiliary task:
-      Audio + transcript -> realized phone sequence
-    Target = HuPER
-    """
     return {
         "type": "chatml",
         "messages": [
-            {
-                "role": "system",
-                "content": [{"text": system_prompt}],
-            },
+            {"role": "system", "content": [{"text": system_prompt}]},
             {
                 "role": "user",
                 "content": [
@@ -334,10 +293,7 @@ def build_aux_realized_from_transcript_task(sample: Dict[str, Any], system_promp
                     },
                 ],
             },
-            {
-                "role": "assistant",
-                "content": [{"text": sample["huper"]}],
-            },
+            {"role": "assistant", "content": [{"text": sample["huper"]}]},
         ],
         "source": "constructed_multitask_chatml",
         "metadata": base_meta(sample, "aux_audio_text_to_realized"),
@@ -352,6 +308,9 @@ TASK_BUILDERS = {
 }
 
 
+# -----------------------------
+# I/O and split helpers
+# -----------------------------
 def load_jsonl(path: str) -> List[Dict[str, Any]]:
     rows = []
     with open(path, "r", encoding="utf-8") as f:
@@ -395,13 +354,6 @@ def normalize_weights(task_weights: Dict[str, float]) -> Dict[str, float]:
 
 
 def integer_allocation(weights: Dict[str, float], total_slots: int) -> Dict[str, int]:
-    """
-    Largest remainder method.
-    Example:
-      weights = {"main":0.5, "canonical":0.25, "edit":0.25}
-      total_slots = 4
-      -> {"main":2, "canonical":1, "edit":1}
-    """
     if total_slots <= 0:
         return {k: 0 for k in weights.keys()}
 
@@ -423,56 +375,6 @@ def integer_allocation(weights: Dict[str, float], total_slots: int) -> Dict[str,
     return base
 
 
-def build_chatml_rows_for_split(
-    rows: List[Dict[str, Any]],
-    task_weights: Dict[str, float],
-    samples_per_audio: int,
-    mode: str,
-    seed: int,
-) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
-    """
-    mode:
-      - "sample": per audio, sample tasks according to weights and samples_per_audio
-      - "all": emit each enabled task exactly once per audio
-    """
-    system_prompt = build_system_prompt()
-    enabled_tasks = [k for k, v in task_weights.items() if v > 0]
-    if len(enabled_tasks) == 0:
-        raise ValueError("No enabled tasks.")
-
-    out = []
-    counter = {k: 0 for k in TASK_BUILDERS.keys()}
-    rnd = random.Random(seed)
-
-    if mode == "sample":
-        alloc = integer_allocation({k: task_weights[k] for k in enabled_tasks}, samples_per_audio)
-
-        for sample in rows:
-            local_tasks = []
-            for task_name, count in alloc.items():
-                builder = TASK_BUILDERS[task_name]
-                for _ in range(count):
-                    local_tasks.append(builder(sample, system_prompt))
-                    counter[task_name] += 1
-            rnd.shuffle(local_tasks)
-            out.extend(local_tasks)
-
-    elif mode == "all":
-        for sample in rows:
-            local_tasks = []
-            for task_name in enabled_tasks:
-                builder = TASK_BUILDERS[task_name]
-                local_tasks.append(builder(sample, system_prompt))
-                counter[task_name] += 1
-            rnd.shuffle(local_tasks)
-            out.extend(local_tasks)
-    else:
-        raise ValueError(f"Unsupported mode: {mode}")
-
-    rnd.shuffle(out)
-    return out, counter
-
-
 def parse_task_weights(args) -> Dict[str, float]:
     return {
         "main": args.w_main,
@@ -480,6 +382,77 @@ def parse_task_weights(args) -> Dict[str, float]:
         "edit": args.w_edit,
         "realized_from_transcript": args.w_realized_from_transcript,
     }
+
+
+# -----------------------------
+# Parallel builders
+# -----------------------------
+def build_tasks_for_one_sample(payload: Tuple[Dict[str, Any], List[str], Dict[str, int], str]) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    sample, enabled_tasks, alloc, system_prompt = payload
+
+    local_tasks = []
+    local_counter = {k: 0 for k in TASK_BUILDERS.keys()}
+
+    for task_name in enabled_tasks:
+        count = alloc.get(task_name, 0)
+        if count <= 0:
+            continue
+        builder = TASK_BUILDERS[task_name]
+        for _ in range(count):
+            local_tasks.append(builder(sample, system_prompt))
+            local_counter[task_name] += 1
+
+    return local_tasks, local_counter
+
+
+def merge_counters(counter_list: List[Dict[str, int]]) -> Dict[str, int]:
+    out = {k: 0 for k in TASK_BUILDERS.keys()}
+    for c in counter_list:
+        for k, v in c.items():
+            out[k] += v
+    return out
+
+
+def build_chatml_rows_for_split_parallel(
+    rows: List[Dict[str, Any]],
+    task_weights: Dict[str, float],
+    samples_per_audio: int,
+    mode: str,
+    seed: int,
+    num_workers: int,
+    chunksize: int,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    system_prompt = build_system_prompt()
+    enabled_tasks = [k for k, v in task_weights.items() if v > 0]
+    if len(enabled_tasks) == 0:
+        raise ValueError("No enabled tasks.")
+
+    if mode == "sample":
+        alloc = integer_allocation({k: task_weights[k] for k in enabled_tasks}, samples_per_audio)
+    elif mode == "all":
+        alloc = {k: 1 for k in enabled_tasks}
+    else:
+        raise ValueError(f"Unsupported mode: {mode}")
+
+    payloads = [(sample, enabled_tasks, alloc, system_prompt) for sample in rows]
+
+    if num_workers <= 1:
+        results = [build_tasks_for_one_sample(p) for p in payloads]
+    else:
+        ctx = get_context("spawn")
+        with ctx.Pool(processes=num_workers) as pool:
+            results = list(pool.imap(build_tasks_for_one_sample, payloads, chunksize=chunksize))
+
+    all_rows = []
+    counters = []
+    for local_tasks, local_counter in results:
+        all_rows.extend(local_tasks)
+        counters.append(local_counter)
+
+    rnd = random.Random(seed)
+    rnd.shuffle(all_rows)
+
+    return all_rows, merge_counters(counters)
 
 
 def save_stats(
@@ -508,7 +481,7 @@ def save_stats(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Build train/dev split + multitask ChatML + sampling ratio control from filtered JSONL."
+        description="Build train/dev split + multitask ChatML + sampling ratio control from filtered JSONL, with CPU parallelism."
     )
     parser.add_argument("--input", type=str, required=True, help="Input filtered unified-vocab JSONL")
     parser.add_argument("--output_dir", type=str, required=True, help="Output directory")
@@ -516,40 +489,22 @@ def main():
     parser.add_argument("--train_ratio", type=float, default=0.98, help="Train split ratio")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
 
-    parser.add_argument(
-        "--train_mode",
-        type=str,
-        default="sample",
-        choices=["sample", "all"],
-        help="How to build train split ChatML"
-    )
-    parser.add_argument(
-        "--dev_mode",
-        type=str,
-        default="all",
-        choices=["sample", "all"],
-        help="How to build dev split ChatML"
-    )
+    parser.add_argument("--train_mode", type=str, default="sample", choices=["sample", "all"])
+    parser.add_argument("--dev_mode", type=str, default="all", choices=["sample", "all"])
 
-    parser.add_argument(
-        "--train_samples_per_audio",
-        type=int,
-        default=4,
-        help="Only used when train_mode=sample. Example: 4 + weights 0.5/0.25/0.25 -> 2/1/1 samples per audio."
-    )
-    parser.add_argument(
-        "--dev_samples_per_audio",
-        type=int,
-        default=3,
-        help="Only used when dev_mode=sample."
-    )
+    parser.add_argument("--train_samples_per_audio", type=int, default=4)
+    parser.add_argument("--dev_samples_per_audio", type=int, default=3)
 
-    parser.add_argument("--w_main", type=float, default=0.5, help="Weight for main task")
-    parser.add_argument("--w_canonical", type=float, default=0.25, help="Weight for canonical auxiliary task")
-    parser.add_argument("--w_edit", type=float, default=0.25, help="Weight for edit auxiliary task")
-    parser.add_argument("--w_realized_from_transcript", type=float, default=0.0, help="Weight for optional realized-from-transcript task")
+    parser.add_argument("--w_main", type=float, default=0.5)
+    parser.add_argument("--w_canonical", type=float, default=0.25)
+    parser.add_argument("--w_edit", type=float, default=0.25)
+    parser.add_argument("--w_realized_from_transcript", type=float, default=0.0)
 
-    parser.add_argument("--save_split_jsonl", action="store_true", help="Also save raw train/dev split JSONL")
+    parser.add_argument("--save_split_jsonl", action="store_true")
+
+    parser.add_argument("--num_workers", type=int, default=cpu_count(), help="CPU workers for parallel task building")
+    parser.add_argument("--chunksize", type=int, default=32, help="Multiprocessing chunksize")
+
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -560,20 +515,24 @@ def main():
 
     task_weights = parse_task_weights(args)
 
-    train_chatml, train_counter = build_chatml_rows_for_split(
+    train_chatml, train_counter = build_chatml_rows_for_split_parallel(
         rows=train_rows,
         task_weights=task_weights,
         samples_per_audio=args.train_samples_per_audio,
         mode=args.train_mode,
         seed=args.seed,
+        num_workers=args.num_workers,
+        chunksize=args.chunksize,
     )
 
-    dev_chatml, dev_counter = build_chatml_rows_for_split(
+    dev_chatml, dev_counter = build_chatml_rows_for_split_parallel(
         rows=dev_rows,
         task_weights=task_weights,
         samples_per_audio=args.dev_samples_per_audio,
         mode=args.dev_mode,
         seed=args.seed + 1,
+        num_workers=args.num_workers,
+        chunksize=args.chunksize,
     )
 
     save_jsonl(train_chatml, str(output_dir / "train.chatml.jsonl"))
@@ -601,6 +560,8 @@ def main():
             "dev_samples_per_audio": args.dev_samples_per_audio,
             "task_weights": task_weights,
             "save_split_jsonl": args.save_split_jsonl,
+            "num_workers": args.num_workers,
+            "chunksize": args.chunksize,
         },
     )
 
